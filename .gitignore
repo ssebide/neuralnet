@@ -1,1 +1,52 @@
-/target
+# Zig build artifacts (essential – never commit these)
+.zig-cache/
+zig-out/
+zig-cache/
+zig-out/
+
+# Temporary compiler/linker outputs
+*.o
+*.obj
+*.a
+*.lib
+*.dll
+*.so
+*.dylib
+*.exe
+*.pdb
+*.ilk
+
+# Test & coverage artifacts
+test-*
+coverage/
+lcov.info
+*.profraw
+*.profdata
+
+# Common release / dist folders
+releases/
+dist/
+artifacts/
+bin/
+build-*/
+
+# ───────────────────────────────────────────────────────────────
+# VS Code – only ignore personal/machine-specific files
+# Keep shared project settings for consistent Zig dev experience
+# ───────────────────────────────────────────────────────────────
+.vscode/*
+!.vscode/settings.json     # ← recommended: Zig/ZLS config, formatOnSave, build-on-save, etc.
+!.vscode/tasks.json        # ← zig build/run/test tasks
+!.vscode/launch.json       # ← debugging config (very useful for Zig)
+!.vscode/extensions.json   # ← recommended extensions (ziglang.vscode-zig, Error Lens, etc.)
+
+# VS Code personal workspace data (always ignore)
+.vscode/*.code-workspace
+.vscode/sftp.json
+.vscode/settings.json.lock  # rare, but sometimes appears
+
+# Editor crash/backup files
+*.code-workspace.bak
+*.swp
+*~
+
