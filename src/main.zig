@@ -12,8 +12,10 @@ const Operation = enum {
 const TrackedF32 = struct {
     val: f32,
     op: Operation,
+    gradient: ?f32 = 0.0,
     in1: ?*TrackedF32,
     in2: ?*TrackedF32,
+    in2_raw: ?f32 = null,
 
     fn init(alloc: std.mem.Allocator, val: f32) !*TrackedF32 {
         const ret = try alloc.create(TrackedF32);
@@ -70,15 +72,69 @@ const TrackedF32 = struct {
         return ret;
     }
 
-    fn pow(alloc: std.mem.Allocator, a: *TrackedF32, b: *TrackedF32) !*TrackedF32 {
+    fn pow(alloc: std.mem.Allocator, a: *TrackedF32, b: f32) !*TrackedF32 {
         const ret = try alloc.create(TrackedF32);
         ret.* = .{
-            .val = std.math.pow(f32, a.val, b.val),
+            .val = std.math.pow(f32, a.val, b),
             .op = .pow,
             .in1 = a,
-            .in2 = b,
+            .in2 = null,
+            .in2_raw = b,
         };
         return ret;
+    }
+
+    fn backprop(self: *TrackedF32, downstream_gradient: f32) void {
+        std.debug.print("backprop {s}\n", .{@tagName(self.op)});
+        switch (self.op) {
+            .init => return,
+            .add => {
+                const in1_grad = 1.0 * downstream_gradient;
+                const in2_grad = 1.0 * downstream_gradient;
+
+                self.in1.?.gradient += in1_grad;
+                self.in2.?.gradient += in2_grad;
+
+                self.in1.?.backprop(in1_grad);
+                self.in2.?.backprop(in2_grad);
+            },
+            .mul => {
+                const in1_grad = self.in2.?.val * downstream_gradient;
+                const in2_grad = self.in1.?.val * downstream_gradient;
+
+                self.in1.?.gradient += in1_grad;
+                self.in2.?.gradient += in2_grad;
+
+                self.in1.?.backprop();
+                self.in2.?.backprop();
+            },
+            .pow => {
+                const grad = self.in2.?.val * self.in2_raw.? * downstream_gradient;
+
+                self.in1.?.gradient += grad;
+                self.in1.?.backprop(grad);
+            },
+            .sub => {
+                const in1_grad = 1.0 * downstream_gradient;
+                const in2_grad = -1.0 * downstream_gradient;
+
+                self.in1.?.gradient += in1_grad;
+                self.in2.?.gradient += in2_grad;
+
+                self.in1.?.backprop(in1_grad);
+                self.in2.?.backprop(in2_grad);
+            },
+            .sigmoid => {
+                const x = self.in1.?.val;
+                const enx = std.math.exp(-x);
+                const enxp1 = (enx + 1);
+
+                const grad = enx / enxp1 / enxp1;
+
+                self.in1.?.gradient += grad;
+                self.in1.?.backprop(grad);
+            },
+        }
     }
 };
 
@@ -112,13 +168,24 @@ const Network = struct {
 
         return TrackedF32.sigmoid(alloc, try TrackedF32.add(alloc, a_out, b_out));
     }
+
+    fn optimize(self: *Network) void {
+        const lr = 0.00001;
+        for (&self.weights) |w| {
+            w.val -= w.gradient * lr;
+        }
+
+        for (&self.biases) |b| {
+            b.val -= b.gradient * lr;
+        }
+    }
 };
 
 fn printNet(input: *TrackedF32, indent_level: usize) void {
     for (0..indent_level) |_| {
         std.debug.print("\t", .{});
     }
-    std.debug.print("{s} : {d}\n", .{ @tagName(input.op), input.val });
+    std.debug.print("{s} : {d} {?d}\n", .{ @tagName(input.op), input.val, input.gradient });
 
     if (input.in1) |in1| {
         printNet(in1, indent_level + 1);
@@ -132,11 +199,34 @@ fn printNet(input: *TrackedF32, indent_level: usize) void {
 pub fn main() !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
 
-    var net = try Network.init(arena.allocator());
-    const output = try net.run(arena.allocator(), 3, 10);
+    var loop_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
 
-    const expected = try TrackedF32.init(arena.allocator(), 0);
-    const loss = try TrackedF32.pow(arena.allocator(), try TrackedF32.sub(arena.allocator(), output, expected), try TrackedF32.init(arena.allocator(), 2));
-    printNet(loss, 0);
-    std.debug.print("{d}", .{output.val});
+    var net = try Network.init(arena.allocator());
+
+    var rng = std.Random.DefaultPrng.init(0);
+    var rand = rng.random();
+
+    while (true) {
+        _ = loop_arena.reset(.retain_capacity);
+        const a = rand.float(f32);
+        const b = rand.float(f32);
+        const output = try net.run(loop_arena.allocator(), a, b);
+
+        const expected = if (a > b)
+            try TrackedF32.init(loop_arena.allocator(), 1)
+        else
+            try TrackedF32.init(loop_arena.allocator(), 0);
+
+        const loss = try TrackedF32.pow(loop_arena.allocator(), try TrackedF32.sub(loop_arena.allocator(), output, expected), 2);
+        loss.backprop(1.0);
+
+        if (std.math.isNan(loss.val)) {
+            continue;
+        }
+
+        printNet(net.weights[0], 0);
+        net.optimize();
+
+        std.debug.print("{any}\n", .{net});
+    }
 }
