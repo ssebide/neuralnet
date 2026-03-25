@@ -129,7 +129,7 @@ const TrackedF32 = struct {
                 const enx = std.math.exp(-x);
                 const enxp1 = (enx + 1);
 
-                const grad = enx / enxp1 / enxp1;
+                const grad = enx / enxp1 / enxp1 * downstream_gradient;
 
                 self.in1.?.gradient += grad;
                 self.in1.?.backprop(grad);
@@ -170,13 +170,27 @@ const Network = struct {
     }
 
     fn optimize(self: *Network) void {
-        const lr = 0.00001;
+        const lr = 0.01;
         for (&self.weights) |w| {
             w.val -= w.gradient * lr;
+            w.gradient = 0;
         }
 
         for (&self.biases) |b| {
             b.val -= b.gradient * lr;
+            b.gradient = 0;
+        }
+
+        self.clearGrad();
+    }
+
+    fn clearGrad(self: *Network) void {
+        for (&self.weights) |w| {
+            w.gradient = 0;
+        }
+
+        for (&self.biases) |b| {
+            b.gradient = 0;
         }
     }
 };
@@ -208,6 +222,8 @@ pub fn main() !void {
 
     while (true) {
         _ = loop_arena.reset(.retain_capacity);
+        var loss = try TrackedF32.init(loop_arena.allocator(), 0);
+
         const a = rand.float(f32);
         const b = rand.float(f32);
         const output = try net.run(loop_arena.allocator(), a, b);
@@ -217,10 +233,17 @@ pub fn main() !void {
         else
             try TrackedF32.init(loop_arena.allocator(), 0);
 
-        const loss = try TrackedF32.pow(loop_arena.allocator(), try TrackedF32.sub(loop_arena.allocator(), output, expected), 2);
+        const this_loss = try TrackedF32.pow(loop_arena.allocator(), try TrackedF32.sub(loop_arena.allocator(), output, expected), 2);
+
+        if (loss.val > 100) break;
+        std.debug.print("in: {d} {d}, out: {d}, loss: {d}\n", .{ a, b, output.val, this_loss.val });
+        loss = try TrackedF32.add(loop_arena.allocator(), this_loss, loss);
+
+        //loss = try TrackedF32.mul(loop_arena.allocator(), loss, try TrackedF32.init(loop_arena.allocator(), 0.001));
         loss.backprop(1.0);
 
         if (std.math.isNan(loss.val)) {
+            net.clearGrad();
             continue;
         }
 
